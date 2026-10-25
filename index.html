@@ -100,6 +100,48 @@
   .start ol { margin: 0; padding-left: 1.2em; color: var(--muted); display: grid; gap: 8px; }
   .start ol b { color: var(--fg); font-weight: 600; }
   .err { color: var(--warn); font-size: 14px; }
+  .controls { grid-template-columns: 1fr 1fr 1fr; }
+  button.save { background: var(--accent); color: #2a1d00; border-color: transparent; }
+  .listBtn { background: none; border: 0; padding: 4px 0; color: var(--muted); font: 500 14px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; justify-self: center; }
+
+  .toast {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(150px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel); border: 1px solid var(--line); color: var(--fg);
+    padding: 10px 16px; border-radius: 999px; font-size: 14px; z-index: 6;
+    white-space: nowrap;
+  }
+
+  .sheet {
+    position: fixed; inset: 0; z-index: 7; background: var(--bg);
+    display: flex; flex-direction: column; gap: 14px;
+    padding-top: max(20px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .sheet > * { width: 100%; max-width: 520px; margin: 0 auto; }
+  .sheetHead { display: flex; justify-content: space-between; align-items: center; }
+  .sheetHead h2 { margin: 0; font-size: 22px; }
+  .sheetHead button { padding: 10px 16px; }
+  .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; -webkit-user-select: text; user-select: text; }
+  .row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+  }
+  .row input {
+    width: 100%; min-width: 0; font: 600 16px var(--font-ui); color: var(--fg);
+    background: transparent; border: 0; border-bottom: 1px dashed var(--line); padding: 2px 0;
+  }
+  .row input:focus { outline: none; border-bottom-color: var(--accent); }
+  .row .meta { white-space: pre-line; font-size: 12px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .row .val { text-align: right; font-variant-numeric: tabular-nums; }
+  .row .val b { font-family: var(--font-num); font-size: 22px; display: block; }
+  .row .val span { font-size: 12px; color: var(--muted); }
+  .row .del { padding: 8px 10px; font-size: 15px; color: var(--muted); background: none; border: 0; }
+  .empty { color: var(--muted); text-align: center; margin-top: 30px; }
+  .sheetActions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button.danger { color: var(--warn); }
   [hidden] { display: none !important; }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -126,6 +168,22 @@
   <div class="controls">
     <button id="zeroBtn" class="primary" type="button">Set zero</button>
     <button id="holdBtn" type="button">Hold</button>
+    <button id="saveBtn" class="save" type="button">Save</button>
+  </div>
+  <button id="listBtn" class="listBtn" type="button">Saved readings (0)</button>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheetHead">
+    <h2>Saved readings</h2>
+    <button id="closeBtn" type="button">Done</button>
+  </div>
+  <div class="list" id="list"></div>
+  <div class="sheetActions">
+    <button id="copyBtn" type="button">Copy all</button>
+    <button id="clearBtn" class="danger" type="button">Delete all</button>
   </div>
 </div>
 
@@ -229,6 +287,86 @@
       : 'Place the phone on the surface in its starting position and tap Set zero.';
     requestAnimationFrame(render);
   }
+
+  // ---------- saved readings ----------
+  let saved = [];
+  try { const s = JSON.parse(localStorage.getItem('am.saved')); if (Array.isArray(s)) saved = s; } catch (e) {}
+  let nextNo = saved.reduce((m, r) => Math.max(m, r.no || 0), 0) + 1;
+  const persist = () => { try { localStorage.setItem('am.saved', JSON.stringify(saved)); } catch (e) {} };
+
+  const fmtTime = t => new Date(t).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const fmt = r => `${r.grade.toFixed(1)} % (${r.deg.toFixed(2)}°)`;
+  // Absolute = tilt from true level (no zero). Relative = change since Set zero.
+  const describe = r => r.relGrade != null
+    ? `${r.relGrade.toFixed(1)} % (${r.relDeg.toFixed(2)}°) from zero · ${r.absGrade.toFixed(1)} % from level`
+    : `${r.absGrade.toFixed(1)} % (${r.absDeg.toFixed(2)}°) from level`;
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 1800);
+  }
+
+  function saveReading() {
+    const r = held || compute();
+    if (!r) { toast('No sensor data yet'); return; }
+    const absDeg = angleDeg(r.g, nearestAxis(r.g));
+    const entry = {
+      no: nextNo++, name: 'Reading ' + (nextNo - 1), t: Date.now(),
+      absDeg, absGrade: Math.tan(absDeg * Math.PI / 180) * 100,
+      relDeg: zero ? r.deg : null, relGrade: zero ? r.grade : null,
+    };
+    saved.push(entry); persist(); renderList();
+    if (navigator.vibrate) navigator.vibrate(40);
+    toast('Saved as ' + entry.name);
+  }
+
+  function renderList() {
+    $('listBtn').textContent = `Saved readings (${saved.length})`;
+    const list = $('list'); list.textContent = '';
+    if (!saved.length) {
+      const e = document.createElement('div'); e.className = 'empty';
+      e.textContent = 'No readings yet. Tap Save on the measuring screen to store one.';
+      list.appendChild(e); return;
+    }
+    saved.slice().reverse().forEach(r => {
+      const row = document.createElement('div'); row.className = 'row';
+      const left = document.createElement('div'); left.style.minWidth = '0';
+      const inp = document.createElement('input');
+      inp.id = 'name-' + r.no; inp.value = r.name; inp.setAttribute('aria-label', 'Name');
+      inp.addEventListener('change', () => { r.name = inp.value.trim() || ('Reading ' + r.no); persist(); });
+      const meta = document.createElement('div'); meta.className = 'meta';
+      meta.textContent = fmtTime(r.t) + '\n' + (r.relGrade != null ? `${r.absGrade.toFixed(1)} % from level` : 'From level (no zero set)');
+      left.append(inp, meta);
+      const val = document.createElement('div'); val.className = 'val';
+      const g = r.relGrade != null ? r.relGrade : r.absGrade, d = r.relDeg != null ? r.relDeg : r.absDeg;
+      val.innerHTML = `<b>${g.toFixed(1)} %</b><span>${d.toFixed(2)}°${r.relGrade != null ? ' from zero' : ''}</span>`;
+      const del = document.createElement('button'); del.className = 'del'; del.type = 'button';
+      del.textContent = '✕'; del.setAttribute('aria-label', 'Delete ' + r.name);
+      del.addEventListener('click', () => { saved = saved.filter(x => x !== r); persist(); renderList(); });
+      row.append(left, val, del); list.appendChild(row);
+    });
+  }
+
+  function asText() {
+    return saved.map(r => `${r.name}: ${describe(r)} — ${fmtTime(r.t)}`).join('\n');
+  }
+
+  $('saveBtn').addEventListener('click', saveReading);
+  $('listBtn').addEventListener('click', () => { renderList(); $('sheet').hidden = false; });
+  $('closeBtn').addEventListener('click', () => { $('sheet').hidden = true; });
+  $('copyBtn').addEventListener('click', async () => {
+    if (!saved.length) return;
+    try { await navigator.clipboard.writeText(asText()); toast('Copied ' + saved.length + ' readings'); }
+    catch (e) { toast('Copy failed — select the text instead'); }
+  });
+  let clearArmed = false;
+  $('clearBtn').addEventListener('click', () => {
+    if (!saved.length) return;
+    if (!clearArmed) { clearArmed = true; $('clearBtn').textContent = 'Tap again to delete'; setTimeout(() => { clearArmed = false; $('clearBtn').textContent = 'Delete all'; }, 3000); return; }
+    saved = []; nextNo = 1; persist(); renderList(); clearArmed = false; $('clearBtn').textContent = 'Delete all';
+  });
+  renderList();
 
   // ---------- controls ----------
   function updateButtons() {
