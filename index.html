@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>AngleMeter</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AngleMeter">
+<meta name="theme-color" content="#0b0e16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+  /* Layout: one-screen instrument — mode-free readout on top, treadmill scale in the middle, two big controls at the thumb. */
+  :root {
+    --bg: #0b0e16;
+    --panel: #151b28;
+    --line: #2a3346;
+    --fg: #eef2f8;
+    --muted: #8b96ab;
+    --level: #3fdc82;
+    --accent: #ffc43c;
+    --warn: #ff8a4c;
+    --font-ui: -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+    --font-num: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.4 var(--font-ui);
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+  }
+  .app {
+    height: 100%;
+    display: flex; flex-direction: column; gap: 20px;
+    padding-top: max(20px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    max-width: 520px; margin: 0 auto;
+  }
+  header { display: flex; justify-content: space-between; align-items: baseline; }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin: 0; color: var(--muted); }
+  .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+  .status[data-s="steady"] .dot { background: var(--level); }
+  .status[data-s="settling"] .dot { background: var(--accent); }
+
+  .readout { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 6px; min-height: 0; }
+  .grade {
+    font-family: var(--font-num);
+    font-size: clamp(88px, 30vw, 150px);
+    font-weight: 600; line-height: 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+    transition: color .2s;
+  }
+  .grade small { font-size: .45em; color: var(--muted); font-weight: 500; margin-left: .05em; }
+  .grade.level { color: var(--level); }
+  .deg { font-size: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .note { font-size: 14px; color: var(--muted); text-align: center; max-width: 30ch; min-height: 2.8em; text-wrap: balance; }
+  .held { font-size: 12px; font-weight: 700; letter-spacing: .12em; color: var(--warn); }
+
+  /* Treadmill scale 0–15 % */
+  .scale { position: relative; height: 54px; }
+  .track { position: absolute; left: 0; right: 0; top: 12px; height: 6px; border-radius: 3px; background: var(--panel); overflow: hidden; }
+  .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: linear-gradient(90deg, var(--level), var(--accent)); border-radius: 3px; transition: width .15s; }
+  .ticks { position: absolute; left: 0; right: 0; top: 24px; height: 30px; }
+  .tick { position: absolute; transform: translateX(-50%); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
+  .tick::before { content: ""; display: block; width: 1px; height: 6px; margin: 0 auto 3px; background: var(--line); }
+
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button {
+    font: 600 17px var(--font-ui);
+    color: var(--fg); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 12px; cursor: pointer;
+  }
+  button:active { transform: scale(.98); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--level); color: #06210f; border-color: transparent; }
+  button.on { border-color: var(--warn); color: var(--warn); }
+
+  .start {
+    position: fixed; inset: 0; z-index: 5;
+    background: var(--bg);
+    display: flex; flex-direction: column; justify-content: center; gap: 22px;
+    padding-left: max(24px, env(safe-area-inset-left, 0px));
+    padding-right: max(24px, env(safe-area-inset-right, 0px));
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+    max-width: 520px; margin: 0 auto;
+  }
+  .start h2 { font-size: 28px; margin: 0; text-wrap: balance; }
+  .start ol { margin: 0; padding-left: 1.2em; color: var(--muted); display: grid; gap: 8px; }
+  .start ol b { color: var(--fg); font-weight: 600; }
+  .err { color: var(--warn); font-size: 14px; }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Treadmill incline</h1>
+    <div class="status" id="status" data-s="wait"><span class="dot"></span><span id="statusText">Waiting for sensors</span></div>
+  </header>
+
+  <section class="readout" aria-live="polite">
+    <div class="grade" id="grade">0.0<small>%</small></div>
+    <div class="deg" id="deg">0.00°</div>
+    <div class="held" id="held" hidden>HELD</div>
+    <div class="note" id="note">Set the treadmill to 0 %, stand the phone on its charging-port edge and tap Set zero.</div>
+  </section>
+
+  <div class="scale" aria-hidden="true">
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <div class="ticks" id="ticks"></div>
+  </div>
+
+  <div class="controls">
+    <button id="zeroBtn" class="primary" type="button">Set zero</button>
+    <button id="holdBtn" type="button">Hold</button>
+  </div>
+</div>
+
+<div class="start" id="start">
+  <h2>Measure your treadmill incline</h2>
+  <ol>
+    <li>Stop the belt and set the incline to <b>0 %</b>.</li>
+    <li>Stand the phone on its <b>charging-port edge</b> on the deck or side rail. Lean it on something fixed to the deck if needed.</li>
+    <li>Tap <b>Set zero</b>, raise the incline and read the %.</li>
+  </ol>
+  <button id="startBtn" class="primary" type="button">Start sensors</button>
+  <div class="err" id="err" hidden></div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const MAX_GRADE = 15;            // typical treadmill range
+  const WINDOW_MS = 1500;          // averaging window for the display
+  const LEVEL_DEG = 0.15;
+
+  // ---------- vector helpers ----------
+  const len = v => Math.hypot(v[0], v[1], v[2]);
+  const norm = v => { const l = len(v) || 1; return [v[0]/l, v[1]/l, v[2]/l]; };
+  const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+  const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  // atan2 form stays accurate for very small angles (acos does not).
+  const angleDeg = (a, b) => Math.atan2(len(cross(a, b)), dot(a, b)) * 180 / Math.PI;
+  const nearestAxis = g => {
+    const a = g.map(Math.abs), i = a.indexOf(Math.max(...a));
+    const r = [0, 0, 0]; r[i] = Math.sign(g[i]) || 1; return r;
+  };
+
+  // ---------- state ----------
+  let samples = [];                // {t, g:[x,y,z]} unit vectors
+  let zero = null;
+  let held = null;
+  let gotData = false;
+  try { const z = JSON.parse(localStorage.getItem('am.zero')); if (Array.isArray(z) && z.length === 3) zero = z; } catch (e) {}
+
+  // ---------- scale ticks ----------
+  for (let p = 0; p <= MAX_GRADE; p += 3) {
+    const t = document.createElement('div');
+    t.className = 'tick'; t.style.left = (p / MAX_GRADE * 100) + '%'; t.textContent = p;
+    $('ticks').appendChild(t);
+  }
+
+  // ---------- sensor input ----------
+  function onMotion(e) {
+    const ig = e.accelerationIncludingGravity;
+    if (!ig || ig.x == null) return;
+    let g = [ig.x, ig.y, ig.z];
+    // iOS: includingGravity − userAcceleration = the sensor-fused gravity vector (much steadier).
+    const a = e.acceleration;
+    if (a && a.x != null) g = [g[0] - a.x, g[1] - a.y, g[2] - a.z];
+    if (len(g) < 1) return;
+    gotData = true;
+    const now = performance.now();
+    samples.push({ t: now, g: norm(g) });
+    while (samples.length && now - samples[0].t > WINDOW_MS) samples.shift();
+  }
+
+  function average() {
+    if (!samples.length) return null;
+    const s = [0, 0, 0];
+    for (const { g } of samples) { s[0] += g[0]; s[1] += g[1]; s[2] += g[2]; }
+    return norm(s);
+  }
+
+  function spreadDeg(avg) {
+    let m = 0;
+    for (const { g } of samples) m = Math.max(m, angleDeg(g, avg));
+    return m;
+  }
+
+  // ---------- render ----------
+  function compute() {
+    const g = average();
+    if (!g) return null;
+    const ref = zero || nearestAxis(g);
+    const deg = angleDeg(g, ref);
+    return { g, deg, grade: Math.tan(deg * Math.PI / 180) * 100, spread: spreadDeg(g) };
+  }
+
+  function render() {
+    const r = held || compute();
+    if (r) {
+      $('grade').innerHTML = r.grade.toFixed(1) + '<small>%</small>';
+      $('deg').textContent = r.deg.toFixed(2) + '°';
+      $('grade').classList.toggle('level', r.deg < LEVEL_DEG);
+      $('fill').style.width = Math.min(100, r.grade / MAX_GRADE * 100) + '%';
+      const st = $('status');
+      if (held) { st.dataset.s = 'steady'; $('statusText').textContent = 'Held'; }
+      else if (r.spread < 0.3) { st.dataset.s = 'steady'; $('statusText').textContent = 'Steady'; }
+      else { st.dataset.s = 'settling'; $('statusText').textContent = 'Settling…'; }
+    } else if (!gotData) {
+      $('status').dataset.s = 'wait'; $('statusText').textContent = 'Waiting for sensors';
+    }
+    $('note').textContent = held ? 'Reading frozen. Tap Release to measure again.'
+      : zero ? 'Measuring from your zero point. Keep the phone in the same spot.'
+      : 'Set the treadmill to 0 %, stand the phone on its charging-port edge and tap Set zero.';
+    requestAnimationFrame(render);
+  }
+
+  // ---------- controls ----------
+  function updateButtons() {
+    $('zeroBtn').textContent = zero ? 'Clear zero' : 'Set zero';
+    $('zeroBtn').classList.toggle('primary', !zero);
+    $('holdBtn').textContent = held ? 'Release' : 'Hold';
+    $('holdBtn').classList.toggle('on', !!held);
+    $('held').hidden = !held;
+  }
+
+  $('zeroBtn').addEventListener('click', () => {
+    held = null;
+    if (zero) zero = null; else { const g = average(); if (g) zero = g; }
+    try { zero ? localStorage.setItem('am.zero', JSON.stringify(zero)) : localStorage.removeItem('am.zero'); } catch (e) {}
+    if (navigator.vibrate) navigator.vibrate(30);
+    updateButtons();
+  });
+
+  $('holdBtn').addEventListener('click', () => {
+    held = held ? null : compute();
+    updateButtons();
+  });
+
+  // ---------- keep screen awake ----------
+  let wakeLock = null;
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
+
+  // ---------- start (iOS needs a tap to ask for motion permission) ----------
+  $('startBtn').addEventListener('click', async () => {
+    const err = $('err'); err.hidden = true;
+    try {
+      if (typeof DeviceMotionEvent === 'undefined') throw new Error('This browser has no motion sensors. Open the page in Safari on your iPhone.');
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        const res = await DeviceMotionEvent.requestPermission();
+        if (res !== 'granted') throw new Error('Motion access was denied. In Safari, tap the "aA" button ▸ Website Settings and allow Motion & Orientation, then reload.');
+      }
+      window.addEventListener('devicemotion', onMotion);
+      keepAwake();
+      $('start').hidden = true;
+      setTimeout(() => {
+        if (!gotData) { $('statusText').textContent = 'No sensor data — page must be opened over https on a phone'; }
+      }, 2500);
+    } catch (e) {
+      err.textContent = e.message || String(e); err.hidden = false;
+    }
+  });
+
+  updateButtons();
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>
