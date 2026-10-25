@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
 <style>
-  /* Layout: one-screen instrument — mode-free readout on top, treadmill scale in the middle, two big controls at the thumb. */
+  /* Layout: one-screen instrument — mode-free readout on top, grade scale in the middle, two big controls at the thumb. */
   :root {
     --bg: #0b0e16;
     --panel: #151b28;
@@ -67,7 +67,7 @@
   .note { font-size: 14px; color: var(--muted); text-align: center; max-width: 30ch; min-height: 2.8em; text-wrap: balance; }
   .held { font-size: 12px; font-weight: 700; letter-spacing: .12em; color: var(--warn); }
 
-  /* Treadmill scale 0–15 % */
+  /* Grade scale 0–20 % */
   .scale { position: relative; height: 54px; }
   .track { position: absolute; left: 0; right: 0; top: 12px; height: 6px; border-radius: 3px; background: var(--panel); overflow: hidden; }
   .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: linear-gradient(90deg, var(--level), var(--accent)); border-radius: 3px; transition: width .15s; }
@@ -107,7 +107,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Treadmill incline</h1>
+    <h1>Incline</h1>
     <div class="status" id="status" data-s="wait"><span class="dot"></span><span id="statusText">Waiting for sensors</span></div>
   </header>
 
@@ -115,7 +115,7 @@
     <div class="grade" id="grade">0.0<small>%</small></div>
     <div class="deg" id="deg">0.00°</div>
     <div class="held" id="held" hidden>HELD</div>
-    <div class="note" id="note">Set the treadmill to 0 %, stand the phone on its charging-port edge and tap Set zero.</div>
+    <div class="note" id="note">Place the phone on the surface in its starting position and tap Set zero.</div>
   </section>
 
   <div class="scale" aria-hidden="true">
@@ -130,11 +130,11 @@
 </div>
 
 <div class="start" id="start">
-  <h2>Measure your treadmill incline</h2>
+  <h2>Measure an incline</h2>
   <ol>
-    <li>Stop the belt and set the incline to <b>0 %</b>.</li>
-    <li>Stand the phone on its <b>charging-port edge</b> on the deck or side rail. Lean it on something fixed to the deck if needed.</li>
-    <li>Tap <b>Set zero</b>, raise the incline and read the %.</li>
+    <li>Put the surface in its <b>starting position</b>, for example level.</li>
+    <li>Stand the phone on its <b>charging-port edge</b> on the surface, or lay it flat. Lean it on something fixed to the surface if needed.</li>
+    <li>Tap <b>Set zero</b>, tilt the surface and read the %.</li>
   </ol>
   <button id="startBtn" class="primary" type="button">Start sensors</button>
   <div class="err" id="err" hidden></div>
@@ -143,7 +143,7 @@
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const MAX_GRADE = 15;            // typical treadmill range
+  const MAX_GRADE = 20;            // range of the scale bar
   const WINDOW_MS = 1500;          // averaging window for the display
   const LEVEL_DEG = 0.15;
 
@@ -167,7 +167,7 @@
   try { const z = JSON.parse(localStorage.getItem('am.zero')); if (Array.isArray(z) && z.length === 3) zero = z; } catch (e) {}
 
   // ---------- scale ticks ----------
-  for (let p = 0; p <= MAX_GRADE; p += 3) {
+  for (let p = 0; p <= MAX_GRADE; p += 5) {
     const t = document.createElement('div');
     t.className = 'tick'; t.style.left = (p / MAX_GRADE * 100) + '%'; t.textContent = p;
     $('ticks').appendChild(t);
@@ -226,7 +226,7 @@
     }
     $('note').textContent = held ? 'Reading frozen. Tap Release to measure again.'
       : zero ? 'Measuring from your zero point. Keep the phone in the same spot.'
-      : 'Set the treadmill to 0 %, stand the phone on its charging-port edge and tap Set zero.';
+      : 'Place the phone on the surface in its starting position and tap Set zero.';
     requestAnimationFrame(render);
   }
 
