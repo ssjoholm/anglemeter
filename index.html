@@ -12,7 +12,8 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
 <style>
-  /* Layout: one-screen instrument — mode-free readout on top, grade scale in the middle, two big controls at the thumb. */
+  /* Layout: one-screen instrument — big actions on top (easy to reach), readout in the middle,
+     setup controls at the bottom; a full-screen coloured frame shows the state from any angle. */
   :root {
     --bg: #0b0e16;
     --panel: #151b28;
@@ -22,10 +23,17 @@
     --level: #3fdc82;
     --accent: #ffc43c;
     --warn: #ff8a4c;
+    --info: #5aa9ff;
+    --state: var(--line);          /* frame / status colour, set per state */
     --font-ui: -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
     --font-num: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif;
     color-scheme: dark;
   }
+  body[data-state="settling"]  { --state: var(--accent); }
+  body[data-state="steady"]    { --state: var(--level); }
+  body[data-state="measuring"] { --state: var(--info); }
+  body[data-state="held"]      { --state: var(--warn); }
+
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -36,42 +44,62 @@
     -webkit-tap-highlight-color: transparent;
     overflow: hidden;
   }
+
+  /* Thick frame around the whole screen: readable even at a steep angle from above. */
+  .frame {
+    position: fixed; inset: 0; z-index: 4; pointer-events: none;
+    border: 12px solid var(--state);
+    transition: border-color .2s, background-color .3s;
+  }
+  .frame.flash { background-color: color-mix(in srgb, var(--level) 35%, transparent); border-color: var(--level); }
+
   .app {
     height: 100%;
-    display: flex; flex-direction: column; gap: 20px;
-    padding-top: max(20px, env(safe-area-inset-top, 0px));
-    padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
-    padding-left: max(16px, env(safe-area-inset-left, 0px));
-    padding-right: max(16px, env(safe-area-inset-right, 0px));
-    max-width: 520px; margin: 0 auto;
+    display: flex; flex-direction: column; gap: 16px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 24px);
+    padding-bottom: max(26px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+    padding-left: max(26px, env(safe-area-inset-left, 0px));
+    padding-right: max(26px, env(safe-area-inset-right, 0px));
+    max-width: 540px; margin: 0 auto;
   }
-  header { display: flex; justify-content: space-between; align-items: baseline; }
-  h1 { font-size: 15px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin: 0; color: var(--muted); }
-  .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
-  .status[data-s="steady"] .dot { background: var(--level); }
-  .status[data-s="settling"] .dot { background: var(--accent); }
 
-  .readout { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 6px; min-height: 0; }
+  .topActions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .status {
+    font-size: 26px; font-weight: 800; letter-spacing: .02em;
+    color: #0b0e16; background: var(--state);
+    border-radius: 999px; padding: 8px 26px;
+    transition: background-color .2s;
+  }
+  body[data-state="wait"] .status { color: var(--fg); }
+
+  .auto {
+    background: var(--panel); border: 2px solid var(--info); border-radius: 16px;
+    padding: 12px 16px; display: grid; gap: 8px; text-align: center;
+  }
+  .auto .step { font-size: 20px; font-weight: 700; text-wrap: balance; }
+  .auto .sub { font-size: 14px; color: var(--muted); text-wrap: balance; }
+  .pips { display: flex; justify-content: center; gap: 10px; }
+  .pip { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--info); }
+  .pip.done { background: var(--info); }
+
+  .readout { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; min-height: 0; }
   .grade {
     font-family: var(--font-num);
-    font-size: clamp(88px, 30vw, 150px);
+    font-size: clamp(80px, 28vw, 150px);
     font-weight: 600; line-height: 1;
     font-variant-numeric: tabular-nums;
     letter-spacing: -.02em;
-    transition: color .2s;
   }
   .grade small { font-size: .45em; color: var(--muted); font-weight: 500; margin-left: .05em; }
-  .grade.level { color: var(--level); }
   .deg { font-size: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .note { font-size: 14px; color: var(--muted); text-align: center; max-width: 30ch; min-height: 2.8em; text-wrap: balance; }
-  .held { font-size: 12px; font-weight: 700; letter-spacing: .12em; color: var(--warn); }
+  .note { font-size: 14px; color: var(--muted); text-align: center; max-width: 32ch; min-height: 2.8em; text-wrap: balance; }
 
   /* Grade scale 0–20 % */
-  .scale { position: relative; height: 54px; }
-  .track { position: absolute; left: 0; right: 0; top: 12px; height: 6px; border-radius: 3px; background: var(--panel); overflow: hidden; }
+  .scale { position: relative; height: 50px; }
+  .track { position: absolute; left: 0; right: 0; top: 10px; height: 6px; border-radius: 3px; background: var(--panel); overflow: hidden; }
   .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: linear-gradient(90deg, var(--level), var(--accent)); border-radius: 3px; transition: width .15s; }
-  .ticks { position: absolute; left: 0; right: 0; top: 24px; height: 30px; }
+  .ticks { position: absolute; left: 0; right: 0; top: 22px; height: 28px; }
   .tick { position: absolute; transform: translateX(-50%); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
   .tick::before { content: ""; display: block; width: 1px; height: 6px; margin: 0 auto 3px; background: var(--line); }
 
@@ -80,46 +108,50 @@
     font: 600 17px var(--font-ui);
     color: var(--fg); background: var(--panel);
     border: 1px solid var(--line); border-radius: 14px;
-    padding: 18px 12px; cursor: pointer;
+    padding: 16px 12px; cursor: pointer;
   }
   button:active { transform: scale(.98); }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .4; }
   button.primary { background: var(--level); color: #06210f; border-color: transparent; }
   button.on { border-color: var(--warn); color: var(--warn); }
+  button.big { font-size: 19px; padding: 20px 10px; }
+  button.save { background: var(--accent); color: #2a1d00; border-color: transparent; }
+  button.autoBtn { background: var(--info); color: #04162b; border-color: transparent; }
+  button.autoBtn.running { background: var(--panel); color: var(--warn); border: 2px solid var(--warn); }
+  .listBtn { background: none; border: 0; padding: 4px 0; color: var(--muted); font: 500 15px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; justify-self: center; }
 
   .start {
-    position: fixed; inset: 0; z-index: 5;
+    position: fixed; inset: 0; z-index: 8;
     background: var(--bg);
     display: flex; flex-direction: column; justify-content: center; gap: 22px;
     padding-left: max(24px, env(safe-area-inset-left, 0px));
     padding-right: max(24px, env(safe-area-inset-right, 0px));
     padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
-    max-width: 520px; margin: 0 auto;
+    max-width: 540px; margin: 0 auto;
   }
   .start h2 { font-size: 28px; margin: 0; text-wrap: balance; }
   .start ol { margin: 0; padding-left: 1.2em; color: var(--muted); display: grid; gap: 8px; }
   .start ol b { color: var(--fg); font-weight: 600; }
   .err { color: var(--warn); font-size: 14px; }
-  button.save { background: var(--accent); color: #2a1d00; border-color: transparent; font-size: 20px; padding: 20px 12px; width: 100%; }
-  .listBtn { background: none; border: 0; padding: 4px 0; color: var(--muted); font: 500 14px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; justify-self: center; }
 
   .toast {
     position: fixed; left: 50%; transform: translateX(-50%);
-    top: calc(150px + env(safe-area-inset-top, 0px));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 190px);
     background: var(--panel); border: 1px solid var(--line); color: var(--fg);
-    padding: 10px 16px; border-radius: 999px; font-size: 14px; z-index: 6;
-    white-space: nowrap;
+    padding: 12px 18px; border-radius: 999px; font-size: 16px; font-weight: 600; z-index: 6;
+    white-space: nowrap; max-width: calc(100vw - 48px); overflow: hidden; text-overflow: ellipsis;
   }
 
   .sheet {
     position: fixed; inset: 0; z-index: 7; background: var(--bg);
     display: flex; flex-direction: column; gap: 14px;
-    padding-top: max(20px, env(safe-area-inset-top, 0px));
+    padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
     padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
     padding-left: max(16px, env(safe-area-inset-left, 0px));
     padding-right: max(16px, env(safe-area-inset-right, 0px));
   }
-  .sheet > * { width: 100%; max-width: 520px; margin: 0 auto; }
+  .sheet > * { width: 100%; max-width: 540px; margin: 0 auto; }
   .sheetHead { display: flex; justify-content: space-between; align-items: center; }
   .sheetHead h2 { margin: 0; font-size: 22px; }
   .sheetHead button { padding: 10px 16px; }
@@ -145,19 +177,25 @@
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
-<body>
-<div class="app">
-  <header>
-    <h1>Incline</h1>
-    <div class="status" id="status" data-s="wait"><span class="dot"></span><span id="statusText">Waiting for sensors</span></div>
-  </header>
+<body data-state="wait">
+<div class="frame" id="frame" aria-hidden="true"></div>
 
-  <button id="saveBtn" class="save" type="button">Save reading</button>
+<div class="app">
+  <div class="topActions">
+    <button id="autoBtn" class="autoBtn big" type="button">Auto measure</button>
+    <button id="saveBtn" class="save big" type="button">Save reading</button>
+  </div>
+
+  <div class="auto" id="autoPanel" hidden aria-live="polite">
+    <div class="step" id="autoStep">Place the phone and keep it still</div>
+    <div class="pips" id="pips"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
+    <div class="sub" id="autoSub">Position 1 sets the zero point</div>
+  </div>
 
   <section class="readout" aria-live="polite">
+    <div class="status" id="statusText">Waiting</div>
     <div class="grade" id="grade">0.0<small>%</small></div>
     <div class="deg" id="deg">0.00°</div>
-    <div class="held" id="held" hidden>HELD</div>
     <div class="note" id="note">Place the phone on the surface in its starting position and tap Set zero.</div>
   </section>
 
@@ -190,11 +228,11 @@
 <div class="start" id="start">
   <h2>Measure an incline</h2>
   <ol>
-    <li>Put the surface in its <b>starting position</b>, for example level.</li>
-    <li>Stand the phone on its <b>charging-port edge</b> on the surface, or lay it flat. Lean it on something fixed to the surface if needed.</li>
-    <li>Tap <b>Set zero</b>, tilt the surface and read the %.</li>
+    <li>Stand the phone on its <b>charging-port edge</b>, turned the same way every time.</li>
+    <li>Tap <b>Auto measure</b>, put the phone on the floor and let go. When the frame flashes green, move it to the next spot.</li>
+    <li>Or measure by hand: <b>Set zero</b> on the reference surface, then <b>Save reading</b> when the frame is green.</li>
   </ol>
-  <button id="startBtn" class="primary" type="button">Start sensors</button>
+  <button id="startBtn" class="primary big" type="button">Start sensors</button>
   <div class="err" id="err" hidden></div>
 </div>
 
@@ -203,7 +241,14 @@
   const $ = id => document.getElementById(id);
   const MAX_GRADE = 20;            // range of the scale bar
   const WINDOW_MS = 1500;          // averaging window for the display
-  const LEVEL_DEG = 0.15;
+  const STEADY_DEG = 0.3;          // manual "Steady" threshold (max deviation in window)
+
+  // Auto measure tuning
+  const AUTO_STILL_DEG = 0.12;     // stricter stillness needed before capturing
+  const AUTO_SETTLE_MS = 1200;     // must be still this long before the first sample
+  const AUTO_SAMPLE_GAP_MS = 900;  // time between the three samples
+  const AUTO_AGREE_DEG = 0.15;     // the three samples must agree within this
+  const AUTO_MOVE_DEG = 1.0;       // this much change counts as "moved to next spot"
 
   // ---------- vector helpers ----------
   const len = v => Math.hypot(v[0], v[1], v[2]);
@@ -212,10 +257,12 @@
   const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
   // atan2 form stays accurate for very small angles (acos does not).
   const angleDeg = (a, b) => Math.atan2(len(cross(a, b)), dot(a, b)) * 180 / Math.PI;
+  const gradeOf = deg => Math.tan(deg * Math.PI / 180) * 100;
   const nearestAxis = g => {
     const a = g.map(Math.abs), i = a.indexOf(Math.max(...a));
     const r = [0, 0, 0]; r[i] = Math.sign(g[i]) || 1; return r;
   };
+  const meanVec = vs => norm(vs.reduce((s, v) => [s[0]+v[0], s[1]+v[1], s[2]+v[2]], [0, 0, 0]));
 
   // ---------- state ----------
   let samples = [];                // {t, g:[x,y,z]} unit vectors
@@ -248,9 +295,7 @@
 
   function average() {
     if (!samples.length) return null;
-    const s = [0, 0, 0];
-    for (const { g } of samples) { s[0] += g[0]; s[1] += g[1]; s[2] += g[2]; }
-    return norm(s);
+    return meanVec(samples.map(s => s.g));
   }
 
   function spreadDeg(avg) {
@@ -259,32 +304,149 @@
     return m;
   }
 
-  // ---------- render ----------
+  const windowFull = () => samples.length > 5 && samples[samples.length - 1].t - samples[0].t > WINDOW_MS * 0.8;
+
+  function measure(g) {
+    const ref = zero || nearestAxis(g);
+    const deg = angleDeg(g, ref);
+    return { g, deg, grade: gradeOf(deg) };
+  }
+
   function compute() {
     const g = average();
     if (!g) return null;
-    const ref = zero || nearestAxis(g);
-    const deg = angleDeg(g, ref);
-    return { g, deg, grade: Math.tan(deg * Math.PI / 180) * 100, spread: spreadDeg(g) };
+    return { ...measure(g), spread: spreadDeg(g) };
   }
 
-  function render() {
+  // ---------- feedback: sound + flash ----------
+  let audio = null;
+  function initAudio() {
+    try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) {}
+  }
+  function beep(freqs) {
+    if (!audio) return;
+    try {
+      let t = audio.currentTime;
+      for (const f of freqs) {
+        const o = audio.createOscillator(), v = audio.createGain();
+        o.frequency.value = f; o.type = 'sine';
+        v.gain.setValueAtTime(0.0001, t); v.gain.exponentialRampToValueAtTime(0.4, t + 0.02);
+        v.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+        o.connect(v).connect(audio.destination); o.start(t); o.stop(t + 0.2);
+        t += 0.2;
+      }
+    } catch (e) {}
+  }
+  function flash() {
+    const f = $('frame'); f.classList.add('flash');
+    setTimeout(() => f.classList.remove('flash'), 1200);
+  }
+
+  // ---------- auto measure ----------
+  // phases: off | settle (waiting for stillness) | sample (taking 3) | moved? (waiting for the phone to be moved)
+  const auto = { phase: 'off', stillSince: 0, taken: [], nextAt: 0, last: null, pos: 0 };
+
+  function autoStart() {
+    initAudio();
+    held = null;
+    zero = null;                         // Position 1 always becomes the new zero point
+    try { localStorage.removeItem('am.zero'); } catch (e) {}
+    Object.assign(auto, { phase: 'settle', stillSince: 0, taken: [], nextAt: 0, last: null, pos: 0 });
+    updateButtons();
+  }
+  function autoStop() {
+    auto.phase = 'off';
+    updateButtons();
+    if (auto.pos) toast(`Auto measure stopped · ${auto.pos} position${auto.pos > 1 ? 's' : ''} saved`);
+  }
+
+  function autoTick(now) {
+    if (auto.phase === 'off' || !windowFull()) return;
+    const g = average(); const spread = spreadDeg(g);
+    const still = spread < AUTO_STILL_DEG;
+
+    if (auto.phase === 'wait-move') {
+      // Wait until the phone has clearly been picked up or put somewhere new.
+      if (spread > AUTO_MOVE_DEG || angleDeg(g, auto.last) > AUTO_MOVE_DEG) {
+        auto.phase = 'settle'; auto.stillSince = 0;
+      }
+      return;
+    }
+
+    if (!still) {                       // any movement restarts this position
+      auto.phase = 'settle'; auto.stillSince = 0; auto.taken = [];
+      return;
+    }
+    if (!auto.stillSince) auto.stillSince = now;
+
+    if (auto.phase === 'settle' && now - auto.stillSince >= AUTO_SETTLE_MS) {
+      auto.phase = 'sample'; auto.taken = []; auto.nextAt = now;
+    }
+    if (auto.phase === 'sample' && now >= auto.nextAt) {
+      auto.taken.push(g); auto.nextAt = now + AUTO_SAMPLE_GAP_MS;
+      beep([660]);
+      if (auto.taken.length === 3) {
+        const t = auto.taken;
+        const agree = Math.max(angleDeg(t[0], t[1]), angleDeg(t[1], t[2]), angleDeg(t[0], t[2]));
+        if (agree > AUTO_AGREE_DEG) { auto.taken = []; auto.stillSince = now; auto.phase = 'settle'; return; }
+        captureAuto(t, agree);
+      }
+    }
+  }
+
+  function captureAuto(vecs, agree) {
+    auto.pos += 1;
+    const g = meanVec(vecs);
+    let setZero = false;
+    if (!zero) {                         // first position becomes the zero point
+      zero = g; setZero = true;
+      try { localStorage.setItem('am.zero', JSON.stringify(zero)); } catch (e) {}
+    }
+    const entry = makeEntry(g, 'Position ' + auto.pos);
+    entry.samples = vecs.map(v => +measure(v).grade.toFixed(2));
+    entry.agreeDeg = +agree.toFixed(3);
+    saved.push(entry); persist(); renderList();
+    auto.last = g; auto.phase = 'wait-move'; auto.taken = [];
+    flash(); beep([880, 1320]);
+    if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
+    toast(`Position ${auto.pos}: ${entry.relGrade.toFixed(1)} %${setZero ? ' · set as zero' : ''}`);
+    updateButtons();
+  }
+
+  // ---------- render ----------
+  function render(now) {
+    autoTick(now);
     const r = held || compute();
+    let state = 'wait', label = 'Waiting';
     if (r) {
       $('grade').innerHTML = r.grade.toFixed(1) + '<small>%</small>';
       $('deg').textContent = r.deg.toFixed(2) + '°';
-      $('grade').classList.toggle('level', r.deg < LEVEL_DEG);
       $('fill').style.width = Math.min(100, r.grade / MAX_GRADE * 100) + '%';
-      const st = $('status');
-      if (held) { st.dataset.s = 'steady'; $('statusText').textContent = 'Held'; }
-      else if (r.spread < 0.3) { st.dataset.s = 'steady'; $('statusText').textContent = 'Steady'; }
-      else { st.dataset.s = 'settling'; $('statusText').textContent = 'Settling…'; }
-    } else if (!gotData) {
-      $('status').dataset.s = 'wait'; $('statusText').textContent = 'Waiting for sensors';
-    }
+      if (held) { state = 'held'; label = 'Held'; }
+      else if (auto.phase === 'sample') { state = 'measuring'; label = 'Measuring'; }
+      else if (r.spread < STEADY_DEG) { state = 'steady'; label = 'Steady'; }
+      else { state = 'settling'; label = 'Settling'; }
+    } else if (gotData) { state = 'settling'; label = 'Settling'; }
+    document.body.dataset.state = state;
+    $('statusText').textContent = label;
+
     $('note').textContent = held ? 'Reading frozen. Tap Release to measure again.'
-      : zero ? 'Measuring from your zero point. Keep the phone in the same spot.'
+      : auto.phase !== 'off' ? (zero ? 'Values are from Position 1 (your zero point).' : 'Position 1 becomes the zero point.')
+      : zero ? 'Measuring from your zero point. Keep the phone turned the same way.'
       : 'Place the phone on the surface in its starting position and tap Set zero.';
+
+    if (auto.phase !== 'off') {
+      const n = auto.pos + 1;
+      const steps = {
+        'settle': ['Put the phone down and let go', `Position ${n} · waiting until it is completely still`],
+        'sample': [`Measuring position ${n}…`, 'Don’t touch the phone'],
+        'wait-move': [`Position ${auto.pos} saved ✓`, 'Move the phone to the next spot, or tap Stop'],
+      }[auto.phase];
+      $('autoStep').textContent = steps[0];
+      $('autoSub').textContent = steps[1];
+      const done = auto.phase === 'wait-move' ? 3 : auto.phase === 'sample' ? auto.taken.length : 0;
+      [...$('pips').children].forEach((p, i) => p.classList.toggle('done', i < done));
+    }
     requestAnimationFrame(render);
   }
 
@@ -295,28 +457,36 @@
   const persist = () => { try { localStorage.setItem('am.saved', JSON.stringify(saved)); } catch (e) {} };
 
   const fmtTime = t => new Date(t).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const fmt = r => `${r.grade.toFixed(1)} % (${r.deg.toFixed(2)}°)`;
   // Absolute = tilt from true level (no zero). Relative = change since Set zero.
-  const describe = r => r.relGrade != null
+  const describe = r => (r.relGrade != null
     ? `${r.relGrade.toFixed(1)} % (${r.relDeg.toFixed(2)}°) from zero · ${r.absGrade.toFixed(1)} % from level`
-    : `${r.absGrade.toFixed(1)} % (${r.absDeg.toFixed(2)}°) from level`;
+    : `${r.absGrade.toFixed(1)} % (${r.absDeg.toFixed(2)}°) from level`)
+    + (r.samples ? ` · samples ${r.samples.map(v => v.toFixed(1)).join(' / ')} %` : '');
+
+  function makeEntry(g, name) {
+    const absDeg = angleDeg(g, nearestAxis(g));
+    const rel = zero ? angleDeg(g, zero) : null;
+    const no = nextNo++;
+    return {
+      no, name: name || ('Reading ' + no), t: Date.now(),
+      absDeg, absGrade: gradeOf(absDeg),
+      relDeg: rel, relGrade: rel != null ? gradeOf(rel) : null,
+    };
+  }
 
   let toastTimer;
   function toast(msg) {
     const t = $('toast'); t.textContent = msg; t.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 1800);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2500);
   }
 
   function saveReading() {
     const r = held || compute();
     if (!r) { toast('No sensor data yet'); return; }
-    const absDeg = angleDeg(r.g, nearestAxis(r.g));
-    const entry = {
-      no: nextNo++, name: 'Reading ' + (nextNo - 1), t: Date.now(),
-      absDeg, absGrade: Math.tan(absDeg * Math.PI / 180) * 100,
-      relDeg: zero ? r.deg : null, relGrade: zero ? r.grade : null,
-    };
+    initAudio();
+    const entry = makeEntry(r.g);
     saved.push(entry); persist(); renderList();
+    flash(); beep([880]);
     if (navigator.vibrate) navigator.vibrate(40);
     toast('Saved as ' + entry.name);
   }
@@ -326,7 +496,7 @@
     const list = $('list'); list.textContent = '';
     if (!saved.length) {
       const e = document.createElement('div'); e.className = 'empty';
-      e.textContent = 'No readings yet. Tap Save on the measuring screen to store one.';
+      e.textContent = 'No readings yet. Use Auto measure or Save reading to store one.';
       list.appendChild(e); return;
     }
     saved.slice().reverse().forEach(r => {
@@ -336,7 +506,9 @@
       inp.id = 'name-' + r.no; inp.value = r.name; inp.setAttribute('aria-label', 'Name');
       inp.addEventListener('change', () => { r.name = inp.value.trim() || ('Reading ' + r.no); persist(); });
       const meta = document.createElement('div'); meta.className = 'meta';
-      meta.textContent = fmtTime(r.t) + '\n' + (r.relGrade != null ? `${r.absGrade.toFixed(1)} % from level` : 'From level (no zero set)');
+      meta.textContent = fmtTime(r.t) + '\n'
+        + (r.relGrade != null ? `${r.absGrade.toFixed(1)} % from level` : 'From level (no zero set)')
+        + (r.samples ? `\nSamples: ${r.samples.map(v => v.toFixed(1)).join(' · ')} %` : '');
       left.append(inp, meta);
       const val = document.createElement('div'); val.className = 'val';
       const g = r.relGrade != null ? r.relGrade : r.absGrade, d = r.relDeg != null ? r.relDeg : r.absDeg;
@@ -370,12 +542,19 @@
 
   // ---------- controls ----------
   function updateButtons() {
+    const running = auto.phase !== 'off';
+    $('autoBtn').textContent = running ? 'Stop auto' : 'Auto measure';
+    $('autoBtn').classList.toggle('running', running);
+    $('autoPanel').hidden = !running;
+    $('saveBtn').disabled = running;
+    $('holdBtn').disabled = running;
     $('zeroBtn').textContent = zero ? 'Clear zero' : 'Set zero';
     $('zeroBtn').classList.toggle('primary', !zero);
     $('holdBtn').textContent = held ? 'Release' : 'Hold';
     $('holdBtn').classList.toggle('on', !!held);
-    $('held').hidden = !held;
   }
+
+  $('autoBtn').addEventListener('click', () => { auto.phase === 'off' ? autoStart() : autoStop(); });
 
   $('zeroBtn').addEventListener('click', () => {
     held = null;
@@ -391,15 +570,15 @@
   });
 
   // ---------- keep screen awake ----------
-  let wakeLock = null;
   async function keepAwake() {
-    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+    try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch (e) {}
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
 
   // ---------- start (iOS needs a tap to ask for motion permission) ----------
   $('startBtn').addEventListener('click', async () => {
     const err = $('err'); err.hidden = true;
+    initAudio();
     try {
       if (typeof DeviceMotionEvent === 'undefined') throw new Error('This browser has no motion sensors. Open the page in Safari on your iPhone.');
       if (typeof DeviceMotionEvent.requestPermission === 'function') {
@@ -410,7 +589,7 @@
       keepAwake();
       $('start').hidden = true;
       setTimeout(() => {
-        if (!gotData) { $('statusText').textContent = 'No sensor data — page must be opened over https on a phone'; }
+        if (!gotData) { $('statusText').textContent = 'No sensor data'; $('note').textContent = 'Open the page over https in Safari on a phone.'; }
       }, 2500);
     } catch (e) {
       err.textContent = e.message || String(e); err.hidden = false;
