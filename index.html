@@ -228,7 +228,7 @@
 <div class="start" id="start">
   <h2>Measure an incline</h2>
   <ol>
-    <li>Stand the phone on its <b>charging-port edge</b>, turned the same way every time.</li>
+    <li>Stand the phone on its <b>charging-port edge</b> with the screen facing the side, so the phone's width runs along the slope. Turn it the same way every time. Leaning sideways doesn't matter.</li>
     <li>Tap <b>Auto measure</b>, put the phone on the floor and let go. When the frame flashes green, move it to the next spot.</li>
     <li>Or measure by hand: <b>Set zero</b> on the reference surface, then <b>Save reading</b> when the frame is green.</li>
   </ol>
@@ -306,10 +306,26 @@
 
   const windowFull = () => samples.length > 5 && samples[samples.length - 1].t - samples[0].t > WINDOW_MS * 0.8;
 
+  // Tilt of g relative to ref.
+  // Standing on an edge: only the tilt in the plane of the screen (along the belt) counts.
+  //   The component along the screen's edge is sin(incline), whatever the phone's sideways
+  //   lean is, so asin() of it ignores lean exactly and keeps the sign (direction).
+  // Lying flat: total tilt, no sign.
+  const R2D = 180 / Math.PI;
+  const axisOf = v => { const a = v.map(Math.abs); return a.indexOf(Math.max(...a)); };
+  function tilt(g, ref) {
+    const ax = axisOf(ref);
+    if (ax !== 2 && axisOf(g) === ax) {
+      const k = ax === 1 ? 0 : 1;                       // the screen axis lying along the belt
+      const deg = (Math.asin(Math.max(-1, Math.min(1, g[k]))) - Math.asin(Math.max(-1, Math.min(1, ref[k])))) * R2D;
+      return { deg, signed: true, lean: Math.asin(Math.max(-1, Math.min(1, g[2]))) * R2D };
+    }
+    return { deg: angleDeg(g, ref), signed: false, lean: null };
+  }
+
   function measure(g) {
-    const ref = zero || nearestAxis(g);
-    const deg = angleDeg(g, ref);
-    return { g, deg, grade: gradeOf(deg) };
+    const t = tilt(g, zero || nearestAxis(g));
+    return { g, deg: t.deg, signed: t.signed, lean: t.lean, grade: gradeOf(t.deg) };
   }
 
   function compute() {
@@ -387,7 +403,8 @@
       beep([660]);
       if (auto.taken.length === 3) {
         const t = auto.taken;
-        const agree = Math.max(angleDeg(t[0], t[1]), angleDeg(t[1], t[2]), angleDeg(t[0], t[2]));
+        const m = t.map(v => measure(v).deg);
+        const agree = Math.max(...m) - Math.min(...m);
         if (agree > AUTO_AGREE_DEG) { auto.taken = []; auto.stillSince = now; auto.phase = 'settle'; return; }
         captureAuto(t, agree);
       }
@@ -409,8 +426,15 @@
     auto.last = g; auto.phase = 'wait-move'; auto.taken = [];
     flash(); beep([880, 1320]);
     if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
-    toast(`Position ${auto.pos}: ${entry.relGrade.toFixed(1)} %${setZero ? ' · set as zero' : ''}`);
+    toast(`Position ${auto.pos}: ${sgn(entry.relGrade, 1, entry.signed)} %${setZero ? ' · set as zero' : ''}`);
     updateButtons();
+  }
+
+  // Signed number for display: "+5.0", "−2.1", "0.0".
+  function sgn(v, d, signed) {
+    const s = Math.abs(v).toFixed(d);
+    if (!signed || +s === 0) return s;
+    return (v > 0 ? '+' : '−') + s;
   }
 
   // ---------- render ----------
@@ -419,9 +443,9 @@
     const r = held || compute();
     let state = 'wait', label = 'Waiting';
     if (r) {
-      $('grade').innerHTML = r.grade.toFixed(1) + '<small>%</small>';
-      $('deg').textContent = r.deg.toFixed(2) + '°';
-      $('fill').style.width = Math.min(100, r.grade / MAX_GRADE * 100) + '%';
+      $('grade').innerHTML = sgn(r.grade, 1, r.signed) + '<small>%</small>';
+      $('deg').textContent = sgn(r.deg, 2, r.signed) + '°' + (r.lean != null ? `  ·  lean ${Math.abs(r.lean).toFixed(1)}° ignored` : '');
+      $('fill').style.width = Math.min(100, Math.abs(r.grade) / MAX_GRADE * 100) + '%';
       if (held) { state = 'held'; label = 'Held'; }
       else if (auto.phase === 'sample') { state = 'measuring'; label = 'Measuring'; }
       else if (r.spread < STEADY_DEG) { state = 'steady'; label = 'Steady'; }
@@ -459,18 +483,21 @@
   const fmtTime = t => new Date(t).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
   // Absolute = tilt from true level (no zero). Relative = change since Set zero.
   const describe = r => (r.relGrade != null
-    ? `${r.relGrade.toFixed(1)} % (${r.relDeg.toFixed(2)}°) from zero · ${r.absGrade.toFixed(1)} % from level`
-    : `${r.absGrade.toFixed(1)} % (${r.absDeg.toFixed(2)}°) from level`)
-    + (r.samples ? ` · samples ${r.samples.map(v => v.toFixed(1)).join(' / ')} %` : '');
+    ? `${sgn(r.relGrade, 1, r.signed)} % (${sgn(r.relDeg, 2, r.signed)}°) from zero · ${sgn(r.absGrade, 1, r.signed)} % from level`
+    : `${sgn(r.absGrade, 1, r.signed)} % (${sgn(r.absDeg, 2, r.signed)}°) from level`)
+    + (r.samples ? ` · samples ${r.samples.map(v => sgn(v, 1, r.signed)).join(' / ')} %` : '')
+    + (r.lean != null ? ` · lean ${Math.abs(r.lean).toFixed(1)}° ignored` : '');
 
   function makeEntry(g, name) {
-    const absDeg = angleDeg(g, nearestAxis(g));
-    const rel = zero ? angleDeg(g, zero) : null;
+    const abs = tilt(g, nearestAxis(g));
+    const rel = zero ? tilt(g, zero) : null;
     const no = nextNo++;
     return {
       no, name: name || ('Reading ' + no), t: Date.now(),
-      absDeg, absGrade: gradeOf(absDeg),
-      relDeg: rel, relGrade: rel != null ? gradeOf(rel) : null,
+      signed: abs.signed && (!rel || rel.signed),
+      lean: abs.lean,
+      absDeg: abs.deg, absGrade: gradeOf(abs.deg),
+      relDeg: rel ? rel.deg : null, relGrade: rel ? gradeOf(rel.deg) : null,
     };
   }
 
@@ -507,12 +534,12 @@
       inp.addEventListener('change', () => { r.name = inp.value.trim() || ('Reading ' + r.no); persist(); });
       const meta = document.createElement('div'); meta.className = 'meta';
       meta.textContent = fmtTime(r.t) + '\n'
-        + (r.relGrade != null ? `${r.absGrade.toFixed(1)} % from level` : 'From level (no zero set)')
-        + (r.samples ? `\nSamples: ${r.samples.map(v => v.toFixed(1)).join(' · ')} %` : '');
+        + (r.relGrade != null ? `${sgn(r.absGrade, 1, r.signed)} % from level` : 'From level (no zero set)')
+        + (r.samples ? `\nSamples: ${r.samples.map(v => sgn(v, 1, r.signed)).join(' · ')} %` : '');
       left.append(inp, meta);
       const val = document.createElement('div'); val.className = 'val';
       const g = r.relGrade != null ? r.relGrade : r.absGrade, d = r.relDeg != null ? r.relDeg : r.absDeg;
-      val.innerHTML = `<b>${g.toFixed(1)} %</b><span>${d.toFixed(2)}°${r.relGrade != null ? ' from zero' : ''}</span>`;
+      val.innerHTML = `<b>${sgn(g, 1, r.signed)} %</b><span>${sgn(d, 2, r.signed)}°${r.relGrade != null ? ' from zero' : ''}</span>`;
       const del = document.createElement('button'); del.className = 'del'; del.type = 'button';
       del.textContent = '✕'; del.setAttribute('aria-label', 'Delete ' + r.name);
       del.addEventListener('click', () => { saved = saved.filter(x => x !== r); persist(); renderList(); });
@@ -548,6 +575,7 @@
     $('autoPanel').hidden = !running;
     $('saveBtn').disabled = running;
     $('holdBtn').disabled = running;
+    $('zeroBtn').disabled = running;
     $('zeroBtn').textContent = zero ? 'Clear zero' : 'Set zero';
     $('zeroBtn').classList.toggle('primary', !zero);
     $('holdBtn').textContent = held ? 'Release' : 'Hold';
