@@ -240,15 +240,18 @@
 (() => {
   const $ = id => document.getElementById(id);
   const MAX_GRADE = 20;            // range of the scale bar
-  const WINDOW_MS = 1500;          // averaging window for the display
-  const STEADY_DEG = 0.3;          // manual "Steady" threshold (max deviation in window)
+  const WINDOW_MS = 2000;          // averaging window: smooths out hand tremor
+  // "Steady" = the AVERAGE has stopped drifting (first vs second half of the window),
+  // and nothing big is happening. Small trembles average out, so they are allowed.
+  const STEADY_DRIFT_DEG = 0.10;
+  const MAX_WOBBLE_DEG = 1.5;
 
   // Auto measure tuning
-  const AUTO_STILL_DEG = 0.12;     // stricter stillness needed before capturing
-  const AUTO_SETTLE_MS = 1200;     // must be still this long before the first sample
+  const AUTO_DRIFT_DEG = 0.10;     // drift limit before auto measure captures
+  const AUTO_SETTLE_MS = 2000;     // no big movement for one averaging window before sampling
   const AUTO_SAMPLE_GAP_MS = 900;  // time between the three samples
-  const AUTO_AGREE_DEG = 0.15;     // the three samples must agree within this
-  const AUTO_MOVE_DEG = 1.0;       // this much change counts as "moved to next spot"
+  const AUTO_AGREE_DEG = 0.20;     // the three samples must agree within this (≈0.35 % grade)
+  const AUTO_MOVE_DEG = 2.0;       // this much change counts as "moved to next spot"
 
   // ---------- vector helpers ----------
   const len = v => Math.hypot(v[0], v[1], v[2]);
@@ -298,11 +301,31 @@
     return meanVec(samples.map(s => s.g));
   }
 
+  // Total wobble in the window (any direction) — used to notice the phone being moved.
   function spreadDeg(avg) {
     let m = 0;
     for (const { g } of samples) m = Math.max(m, angleDeg(g, avg));
     return m;
   }
+
+  // Stability of the value we actually measure. Standing on an edge, that is only the
+  // tilt along the belt, so swaying sideways is ignored.
+  //   drift  = how much the average moved between the first and second half of the window
+  //   wobble = largest single swing (catches the phone being picked up or knocked)
+  function stability(avg) {
+    const n = samples.length, half = n >> 1;
+    if (n < 10) return { drift: 99, wobble: 99 };
+    const ax = axisOf(avg);
+    if (ax !== 2 && samples.every(s => axisOf(s.g) === ax)) {
+      const k = ax === 1 ? 0 : 1;
+      const v = samples.map(s => Math.asin(Math.max(-1, Math.min(1, s.g[k]))) * 180 / Math.PI);
+      const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+      return { drift: Math.abs(mean(v.slice(0, half)) - mean(v.slice(half))), wobble: Math.max(...v) - Math.min(...v) };
+    }
+    const a = meanVec(samples.slice(0, half).map(s => s.g)), b = meanVec(samples.slice(half).map(s => s.g));
+    return { drift: angleDeg(a, b), wobble: spreadDeg(avg) };
+  }
+  const isSteady = (st, driftLimit) => st.drift < driftLimit && st.wobble < MAX_WOBBLE_DEG;
 
   const windowFull = () => samples.length > 5 && samples[samples.length - 1].t - samples[0].t > WINDOW_MS * 0.8;
 
@@ -328,10 +351,15 @@
     return { g, deg: t.deg, signed: t.signed, lean: t.lean, grade: gradeOf(t.deg) };
   }
 
+  let steadyNow = false;
   function compute() {
     const g = average();
     if (!g) return null;
-    return { ...measure(g), spread: spreadDeg(g) };
+    const st = stability(g);
+    // Hysteresis: become steady below the limit, stop being steady only well above it.
+    if (st.wobble > MAX_WOBBLE_DEG || st.drift > STEADY_DRIFT_DEG * 2) steadyNow = false;
+    else if (st.drift < STEADY_DRIFT_DEG) steadyNow = true;
+    return { ...measure(g), steady: steadyNow };
   }
 
   // ---------- feedback: sound + flash ----------
@@ -379,7 +407,7 @@
   function autoTick(now) {
     if (auto.phase === 'off' || !windowFull()) return;
     const g = average(); const spread = spreadDeg(g);
-    const still = spread < AUTO_STILL_DEG;
+    const st = stability(g);
 
     if (auto.phase === 'wait-move') {
       // Wait until the phone has clearly been picked up or put somewhere new.
@@ -389,23 +417,25 @@
       return;
     }
 
-    if (!still) {                       // any movement restarts this position
+    if (st.wobble > MAX_WOBBLE_DEG) {   // real movement (placing, knocking) restarts this position
       auto.phase = 'settle'; auto.stillSince = 0; auto.taken = [];
       return;
     }
     if (!auto.stillSince) auto.stillSince = now;
 
+    // Wait one full averaging window after placing, so the average holds only the new spot.
     if (auto.phase === 'settle' && now - auto.stillSince >= AUTO_SETTLE_MS) {
       auto.phase = 'sample'; auto.taken = []; auto.nextAt = now;
     }
-    if (auto.phase === 'sample' && now >= auto.nextAt) {
+    // Take a sample whenever the average isn't drifting; a small tremble just delays it.
+    if (auto.phase === 'sample' && now >= auto.nextAt && st.drift < AUTO_DRIFT_DEG) {
       auto.taken.push(g); auto.nextAt = now + AUTO_SAMPLE_GAP_MS;
       beep([660]);
       if (auto.taken.length === 3) {
         const t = auto.taken;
         const m = t.map(v => measure(v).deg);
         const agree = Math.max(...m) - Math.min(...m);
-        if (agree > AUTO_AGREE_DEG) { auto.taken = []; auto.stillSince = now; auto.phase = 'settle'; return; }
+        if (agree > AUTO_AGREE_DEG) { auto.taken.shift(); return; }   // keep the newest two, try again
         captureAuto(t, agree);
       }
     }
@@ -448,7 +478,7 @@
       $('fill').style.width = Math.min(100, Math.abs(r.grade) / MAX_GRADE * 100) + '%';
       if (held) { state = 'held'; label = 'Held'; }
       else if (auto.phase === 'sample') { state = 'measuring'; label = 'Measuring'; }
-      else if (r.spread < STEADY_DEG) { state = 'steady'; label = 'Steady'; }
+      else if (r.steady) { state = 'steady'; label = 'Steady'; }
       else { state = 'settling'; label = 'Settling'; }
     } else if (gotData) { state = 'settling'; label = 'Settling'; }
     document.body.dataset.state = state;
