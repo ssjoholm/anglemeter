@@ -119,7 +119,7 @@
   button.save { background: var(--accent); color: #2a1d00; border-color: transparent; }
   button.autoBtn { background: var(--info); color: #04162b; border-color: transparent; }
   button.autoBtn.running { background: var(--panel); color: var(--warn); border: 2px solid var(--warn); }
-  .listBtn { background: none; border: 0; padding: 4px 0; color: var(--muted); font: 500 15px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; justify-self: center; }
+  .listBtn { white-space: nowrap; background: none; border: 0; padding: 4px 0; color: var(--muted); font: 500 15px var(--font-ui); text-decoration: underline; text-underline-offset: 3px; justify-self: center; }
 
   .start {
     position: fixed; inset: 0; z-index: 8;
@@ -173,6 +173,8 @@
   .empty { color: var(--muted); text-align: center; margin-top: 30px; }
   .sheetActions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   button.danger { color: var(--warn); }
+  .version { white-space: nowrap; font-size: 12px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+  .bottomRow { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
   [hidden] { display: none !important; }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -208,7 +210,10 @@
     <button id="zeroBtn" class="primary" type="button">Set zero</button>
     <button id="holdBtn" type="button">Hold</button>
   </div>
-  <button id="listBtn" class="listBtn" type="button">Saved readings (0)</button>
+  <div class="bottomRow">
+    <button id="listBtn" class="listBtn" type="button">Saved readings (0)</button>
+    <span class="version" data-version="short"></span>
+  </div>
 </div>
 
 <div class="toast" id="toast" hidden></div>
@@ -229,16 +234,24 @@
   <h2>Measure an incline</h2>
   <ol>
     <li>Stand the phone on its <b>charging-port edge</b> with the screen facing the side, so the phone's width runs along the slope. Turn it the same way every time. Leaning sideways doesn't matter.</li>
-    <li>Tap <b>Auto measure</b>, put the phone on the floor and let go. When the frame flashes green, move it to the next spot.</li>
+    <li>Tap <b>Auto measure</b> and put the phone on the floor. You can hold it lightly. When the frame flashes green, move it to the next spot.</li>
     <li>Or measure by hand: <b>Set zero</b> on the reference surface, then <b>Save reading</b> when the frame is green.</li>
   </ol>
   <button id="startBtn" class="primary big" type="button">Start sensors</button>
   <div class="err" id="err" hidden></div>
+  <div class="version" data-version></div>
 </div>
 
 <script>
 (() => {
   const $ = id => document.getElementById(id);
+
+  // Bump both on every release so the screen shows which version is loaded.
+  const APP_VERSION = "1.7";
+  const APP_BUILT = "2026-10-28 18:40";
+  document.querySelectorAll('[data-version]').forEach(el => {
+    el.textContent = el.dataset.version === 'short' ? `v${APP_VERSION} · ${APP_BUILT}` : `Version ${APP_VERSION} · ${APP_BUILT}`;
+  });
   const MAX_GRADE = 20;            // range of the scale bar
   const WINDOW_MS = 2000;          // averaging window: smooths out hand tremor
   // "Steady" = the AVERAGE has stopped drifting (first vs second half of the window),
